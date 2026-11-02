@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automotores Punilla · Control de flota</title>
+<meta name="author" content="Maldonado Jorge Matias">
+<meta name="copyright" content="© 2026 Maldonado Jorge Matias. Todos los derechos reservados.">
+<!-- Aplicación desarrollada por Maldonado Jorge Matias (Jorgematiasmaldonado@gmail.com). Todos los derechos reservados. -->
+<!-- Librerías por CDN (se necesita internet la primera vez; luego el navegador las cachea) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  body{background:#0a1020;color:#e2e8f0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .panel{background:#101a30;border:1px solid #1d2b4a;border-radius:.75rem}
+  .kpi{transition:transform .2s,box-shadow .2s,border-color .2s}
+  .kpi:hover{transform:translateY(-3px);box-shadow:0 10px 24px rgba(0,0,0,.4)}
+  .num{font-variant-numeric:tabular-nums}
+  select,input[type=date]{background:#0a1020;border:1px solid #1d2b4a;border-radius:.5rem;padding:.4rem .6rem;color:#e2e8f0;color-scheme:dark}
+  select:focus,input:focus,button:focus-visible{outline:2px solid #10b981;outline-offset:1px}
+  .scroll::-webkit-scrollbar{width:6px;height:6px}.scroll::-webkit-scrollbar-thumb{background:#1d2b4a;border-radius:3px}
+  th{font-weight:600;text-align:left;padding:.5rem .75rem;color:#94a3b8;position:sticky;top:0;background:#101a30}
+  td{padding:.5rem .75rem;border-top:1px solid #1d2b4a;vertical-align:top}
+  /* Informe formal (hoja blanca, tipografía con serif) */
+  .paper{background:#fff;color:#111827;font-family:Georgia,"Times New Roman",serif;padding:2.2rem 2.4rem;line-height:1.5;font-size:14px;border-radius:.25rem}
+  .paper h1{font-size:1.6rem;margin:.2rem 0 .8rem}
+  .paper h2{font-size:1.1rem;margin:1.5rem 0 .5rem;padding-bottom:.25rem;border-bottom:2px solid #1e3a5f;color:#1e3a5f}
+  .paper h3{font-size:1rem;margin:1.2rem 0 .4rem;color:#1e3a5f}
+  .paper table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .paper th,.paper td{border:1px solid #cbd5e1;padding:.35rem .5rem;text-align:left;vertical-align:top;position:static;background:none;color:#111827}
+  .paper th{background:#e8eef6;font-weight:700}
+  .paper .r{text-align:right}.paper .muted{color:#475569;font-size:12px}
+  .paper ul{margin:.3rem 0 .3rem 1.2rem;list-style:disc}
+  .badge{display:inline-block;padding:0 .5rem;border-radius:.25rem;font-weight:700;font-size:12px;border:1px solid}
+  .b-ok{color:#047857;border-color:#047857;background:#ecfdf5}.b-bad{color:#b91c1c;border-color:#b91c1c;background:#fef2f2}.b-nd{color:#475569;border-color:#94a3b8}
+  @page{size:A4;margin:14mm}
+  @media print{
+    body{background:#fff}
+    #app,.noprint{display:none!important}
+    #reportOverlay{position:static!important;background:#fff!important;padding:0!important;overflow:visible!important}
+    .paper{padding:0}.paper *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .paper h2,.paper h3{break-after:avoid}.paper tr,.paper li,.movil{break-inside:avoid}
+  }
+  @media (prefers-reduced-motion:reduce){.kpi{transition:none}.kpi:hover{transform:none}}
+</style>
+</head>
+<body class="min-h-screen">
+<div id="app" class="max-w-7xl mx-auto p-4 md:p-6 space-y-5">
+
+  <!-- ENCABEZADO + ESTADO ACTUAL DE CADA MÓVIL -->
+  <header class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="text-2xl md:text-3xl font-bold">Automotores Punilla</h1>
+      <p class="text-slate-400">Control diario de la flota · móviles 445, 481, 482, 483, 484 y 485</p>
+    </div>
+    <div id="strip" class="flex flex-wrap gap-2" aria-label="Estado actual por móvil"></div>
+  </header>
+
+  <!-- 1. CARGA DE ARCHIVOS -->
+  <section class="panel p-4">
+    <label id="drop" for="file" class="block cursor-pointer rounded-lg border-2 border-dashed border-slate-600 hover:border-emerald-500 p-6 text-center transition-colors">
+      <p class="font-semibold">Arrastrá el Excel semanal acá o hacé clic para elegirlo</p>
+      <p class="text-sm text-slate-400">.xlsx, .xls o .csv · podés cargar varios archivos a la vez (se unen y se eliminan duplicados)</p>
+      <input id="file" type="file" accept=".xlsx,.xls,.csv" multiple class="sr-only">
+    </label>
+    <div class="flex flex-wrap items-center gap-3 mt-3 text-sm">
+      <span id="status" class="text-slate-400">Todavía no hay datos cargados.</span>
+      <label class="ml-auto flex items-center gap-2"><input type="checkbox" id="merge"> Sumar a los datos guardados (en vez de reemplazarlos)</label>
+      <button id="clear" class="px-3 py-1.5 rounded-lg border border-slate-600 hover:border-red-500">Borrar datos guardados</button>
+      <button id="demo" class="px-3 py-1.5 rounded-lg border border-slate-600 hover:border-emerald-500">Probar con datos de ejemplo</button>
+    </div>
+  </section>
+
+  <!-- FILTROS (afectan a todo el dashboard) -->
+  <section class="panel p-4 flex flex-wrap gap-4 items-end text-sm">
+    <label class="flex flex-col gap-1">Móvil<select id="fMovil"><option value="">Todos</option></select></label>
+    <label id="lGuardia" class="flex flex-col gap-1">Guardia<select id="fGuardia"><option value="">Todas</option><option>A</option><option>B</option><option>C</option></select></label>
+    <label class="flex flex-col gap-1">Informó<select id="fInformo"><option value="">Todos</option></select></label>
+    <label class="flex flex-col gap-1">Desde<input type="date" id="fDesde"></label>
+    <label class="flex flex-col gap-1">Hasta<input type="date" id="fHasta"></label>
+    <button id="reset" class="px-3 py-1.5 rounded-lg border border-slate-600 hover:border-emerald-500">Limpiar filtros</button>
+  </section>
+
+  <!-- INFORME FORMAL PARA JEFATURA -->
+  <section class="panel p-4 flex flex-wrap gap-4 items-end text-sm">
+    <div class="mr-2"><h2 class="font-semibold text-base">Informe para jefatura</h2><p class="text-slate-400">Documento formal listo para imprimir o guardar como PDF</p></div>
+    <label class="flex flex-col gap-1">Alcance<select id="rMovil"><option value="">Todos los móviles</option></select></label>
+    <label class="flex flex-col gap-1">Período<select id="rPeriodo"><option value="sem">Última semana</option><option value="mes">Último mes</option><option value="anio">Último año</option></select></label>
+    <button id="rGen" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">Generar informe</button>
+  </section>
+
+  <!-- 2. KPIs -->
+  <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="kpi panel p-4 border-l-4 !border-l-emerald-500"><p class="text-slate-400 text-sm">Km recorridos</p><p id="kKm" class="num text-3xl font-bold mt-1">—</p></div>
+    <div class="kpi panel p-4 border-l-4 !border-l-emerald-500"><p class="text-slate-400 text-sm">Disponibilidad de la flota</p><p id="kDisp" class="num text-3xl font-bold mt-1 text-emerald-400">—</p></div>
+    <div class="kpi panel p-4 border-l-4 !border-l-red-500"><p class="text-slate-400 text-sm">Móviles fuera de servicio</p><p id="kFuera" class="num text-3xl font-bold mt-1">—</p></div>
+    <div class="kpi panel p-4 border-l-4 !border-l-red-500"><p class="text-slate-400 text-sm">Alertas críticas</p><p id="kAlert" class="num text-3xl font-bold mt-1 text-red-400">—</p></div>
+  </section>
+
+  <!-- 3. GRÁFICOS + FEED DE ALERTAS -->
+  <section class="grid lg:grid-cols-3 gap-4">
+    <div class="panel p-4"><h2 class="font-semibold mb-2">Km acumulados por móvil</h2><div class="h-64"><canvas id="cBar"></canvas></div></div>
+    <div class="panel p-4 lg:col-span-2">
+      <div class="flex items-center justify-between mb-2"><h2 class="font-semibold">Evolución del kilometraje total</h2>
+        <select id="fAgrup"><option value="sem">Por semana</option><option value="dia">Por día</option></select></div>
+      <div class="h-64"><canvas id="cLine"></canvas></div>
+    </div>
+  </section>
+
+  <section class="grid lg:grid-cols-3 gap-4">
+    <div class="panel p-4">
+      <h2 class="font-semibold mb-2 flex items-center gap-2"><span class="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>Alertas críticas activas</h2>
+      <ul id="feed" class="space-y-2 max-h-96 overflow-y-auto scroll text-sm"></ul>
+    </div>
+    <div class="panel p-4 lg:col-span-2">
+      <h2 class="font-semibold mb-2">Historial de novedades</h2>
+      <div class="overflow-auto scroll max-h-96">
+        <table class="w-full text-sm"><thead><tr>
+          <th>Fecha</th><th>Móvil</th><th>Informó</th><th>Estado</th><th>Km</th><th>Combustible</th><th>Luces</th><th>Novedades físicas / observaciones</th>
+        </tr></thead><tbody id="tbody"></tbody></table>
+      </div>
+      <div class="flex items-center justify-between mt-3 text-sm">
+        <button id="prev" class="px-3 py-1.5 rounded-lg border border-slate-600 hover:border-emerald-500">Anterior</button>
+        <span id="pager" class="text-slate-400"></span>
+        <button id="next" class="px-3 py-1.5 rounded-lg border border-slate-600 hover:border-emerald-500">Siguiente</button>
+      </div>
+    </div>
+  </section>
+
+  <footer class="text-center text-xs text-slate-500 pb-4 space-y-1">
+    <p>Desarrollado por Maldonado Jorge Matias - Email: <a class="underline hover:text-emerald-400" href="mailto:Jorgematiasmaldonado@gmail.com">Jorgematiasmaldonado@gmail.com</a></p>
+    <p>© 2026 Maldonado Jorge Matias. Esta aplicación es de su propiedad y autoría. Todos los derechos reservados: no se permite copiarla, modificarla ni redistribuirla sin su autorización.</p>
+    <p>Los datos que cargues se guardan solo en este navegador; no se envían a ningún servidor.</p>
+  </footer>
+</div>
+
+<!-- Vista del informe (se superpone al dashboard; al imprimir solo sale la hoja) -->
+<div id="reportOverlay" class="hidden fixed inset-0 z-50 overflow-auto p-4" style="background:rgba(5,9,20,.88)">
+  <div class="max-w-4xl mx-auto">
+    <div class="noprint flex justify-end gap-2 mb-3">
+      <button id="rPrint" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white">Imprimir o guardar como PDF</button>
+      <button id="rClose" class="px-3 py-1.5 rounded-lg border border-slate-500 text-slate-200 hover:border-emerald-500">Cerrar</button>
+    </div>
+    <article id="paper" class="paper"></article>
+  </div>
+</div>
+
+<script>
+/* ============ CONFIGURACIÓN ============ */
+const $ = id => document.getElementById(id);
+const MOVILES = ['445','481','482','483','484','485'];
+// Palabras de riesgo (sin tildes y en minúscula; "desinflad" cubre desinflada/desinflado, "rata" cubre ratas)
+const KEYWORDS = [   // [etiqueta, patrón sobre texto sin tildes y en minúscula] (incluye variantes y errores de tipeo del chat)
+  ['Cuesta arrancar', /(cuesta|costo)\s+(al\s+)?arrancar|arrancar\s+le\s+cuesta/], ['Desinflada', /desinfl/], ['Pinchado', /pinchad/],
+  ['Bieleta', /bieleta/], ['Sin batería', /sin bater/], ['Ratas', /\bratas?\b/]
+];
+const PER_PAGE = 10;
+const LS_KEY = 'punilla_flota_v1';   // clave donde se guardan los datos en este navegador
+let DATA = [], charts = {}, page = 1;
+
+/* ============ PERSISTENCIA (localStorage) ============ */
+function guardar(){ try { localStorage.setItem(LS_KEY, JSON.stringify({guardado:new Date().toISOString(), data:DATA})); return true; } catch (e) { return false; } }
+function restaurar(){
+  try {
+    const j = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+    if (j && Array.isArray(j.data) && j.data.length) { DATA = j.data; setData(`Datos guardados en este navegador: ${DATA.length} registros (cargados el ${new Date(j.guardado).toLocaleString('es-AR')}).`); return true; }
+  } catch (e) {}
+  return false;
+}
+
+/* ============ UTILIDADES ============ */
+const norm = s => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2,'0');
+const fmtFecha = f => f.split('-').reverse().join('/');
+const fmtNum = n => Math.round(n).toLocaleString('es-AR');
+
+/* ============ 1. LECTURA Y SANITIZACIÓN DEL EXCEL ============ */
+// Detecta qué columna del Excel corresponde a cada campo, aunque el encabezado cambie de nombre.
+const FIELDS = [
+  ['fecha',/fecha|^dia/], ['movil',/movil|unidad|interno|vehic/], ['km',/^km|kilometr|odometro/],
+  ['comb',/combust|nafta|tanque/], ['estado',/estado|situacion|operativ/], ['guardia',/guardia|turno/],
+  ['luces',/luz|luces/], ['fisico',/fisic|novedad|carroc/], ['obs',/observ|coment|detalle|nota/], ['id',/^id$/], ['informo',/informo|informa|reporta|chofer/]
+];
+function mapHeaders(keys){
+  const m = {};
+  keys.forEach(k => { const n = norm(k);
+    for (const [f,re] of FIELDS) if (!m[f] && re.test(n)) { m[f] = k; break; } });
+  return m;
+}
+
+function cleanFecha(v){
+  if (v instanceof Date && !isNaN(v)) { const d = new Date(v.getTime() + 12*36e5); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+  if (typeof v === 'number') return new Date(Math.round((v-25569)*864e5)).toISOString().slice(0,10); // número de serie de Excel
+  const s = String(v).trim(); let m;
+  if (m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/)) { let y = +m[3]; if (y < 100) y += 2000; return y+'-'+pad(m[2])+'-'+pad(m[1]); }
+  if (m = s.match(/^\d{4}-\d{2}-\d{2}/)) return m[0];
+  return null;
+}
+const cleanMovil = v => { const m = String(v).match(/\d{3}/); return m ? m[0] : null; };          // "Móvil 483" -> "483"
+function cleanKm(v){                                                                                  // "45.230 km" -> 45230
+  if (typeof v === 'number') return v;
+  let s = norm(v).replace(/km|\s/g,''); if (!/\d/.test(s)) return null;
+  if (s.includes(',') && s.includes('.')) s = s.replace(/\./g,'').replace(',','.');
+  else if (s.includes(',')) s = s.replace(',','.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g,'');
+  const n = parseFloat(s.replace(/[^\d.]/g,'')); return isNaN(n) ? null : n;
+}
+function cleanComb(v){                                                                                // "full", "5/5", "-2", "-3 líneas", "1/2 tanque", "full menos una linea"
+  const s = norm(v); let m; if (!s) return {pct:null, txt:'—'};
+  if (/menos una/.test(s)) return {pct:80, txt:'Full -1 línea'};
+  if (/^ful|full|lleno/.test(s)) return {pct:100, txt:'Full'};
+  if (m = s.match(/(\d+)\s*\/\s*(\d+)/)) return {pct:Math.round(m[1]/m[2]*100), txt:m[0]};
+  if (m = s.match(/^-\s*(\d+)/)) return {pct:Math.max(0,(5-m[1])*20), txt:'-'+m[1]+(m[1]>1?' líneas':' línea')}; // supuesto: tablero de 5 líneas
+  if (m = s.match(/(\d+)\s*%/)) return {pct:+m[1], txt:m[1]+'%'};
+  if (/^(ok|bien|normal)/.test(s)) return {pct:null, txt:'OK'};
+  return {pct:null, txt:String(v)};
+}
+function cleanEstado(v, obs){                    // 'fuera' | 'operativo' | 'sd' (sin dato: no cuenta para la disponibilidad)
+  const s = norm(v);
+  if (/fuera|f\/s|taller|averi|parad|no opera|inoperat|baja/.test(s) || /fuera de servicio/.test(norm(obs))) return 'fuera';
+  return (!s || s === '-') ? 'sd' : 'operativo';
+}
+const cleanGuardia = v => { const m = norm(v).match(/\b([abc])\b/); return m ? m[1].toUpperCase() : ''; };
+
+// Convierte las filas crudas de una hoja en registros limpios
+function parseRows(rows){
+  const ok = []; let skipped = 0;
+  if (!rows.length) return {ok, skipped, valid:false};
+  const m = mapHeaders(Object.keys(rows[0]));
+  // Solo se usan hojas de controles diarios (con Fecha, Móvil, Km y Estado): así se ignoran Resumen, Salidas y Regresos
+  if (!(m.fecha && m.movil && m.km && m.estado)) return {ok, skipped, valid:false};
+  rows.forEach((r, idx) => {
+    const g = f => m[f] ? r[m[f]] : '';
+    const fecha = cleanFecha(g('fecha')), movil = cleanMovil(g('movil'));
+    if (!fecha || !movil) { skipped++; return; }
+    const obs = [g('fisico'), g('obs')].map(x => String(x).trim()).filter(Boolean).join(' · ');
+    ok.push({ fecha, movil, id:Number(g('id')) || 0, idx, informo:String(g('informo')).trim(), nov:String(g('fisico')).trim(), guardia:cleanGuardia(g('guardia')),
+              km:cleanKm(g('km')), comb:cleanComb(g('comb')), estado:cleanEstado(g('estado'), obs), luces:String(g('luces')).trim(), obs });
+  });
+  return {ok, skipped, valid:true};
+}
+
+// Lee uno o varios archivos con SheetJS, une todas las hojas y elimina duplicados
+async function loadFiles(files){
+  let all = [], skipped = 0; const used = new Set();
+  try {
+    for (const f of files) {
+      const wb = XLSX.read(await f.arrayBuffer(), {type:'array', cellDates:true});
+      for (const name of wb.SheetNames) {
+        const p = parseRows(XLSX.utils.sheet_to_json(wb.Sheets[name], {defval:'', raw:true}));
+        if (!p.valid) continue;
+        used.add(name); all.push(...p.ok); skipped += p.skipped;
+      }
+    }
+  } catch (e) { $('status').textContent = 'No se pudo leer el archivo: ' + e.message; return; }
+  if (!all.length) { $('status').textContent = 'No encontré una hoja con las columnas Fecha, Móvil, Km y Estado.'; return; }
+  if ($('merge').checked) all = DATA.concat(all);   // modo "sumar": une lo guardado con el archivo nuevo
+  const seen = new Set();
+  DATA = all.filter(r => { const k = [r.fecha,r.movil,r.km,r.informo,r.estado,r.obs].join('|'); if (seen.has(k)) return false; seen.add(k); return true; });
+  const msg = `${DATA.length} registros cargados · hoja(s): ${[...used].join(', ')}` + (skipped ? ` · ${skipped} filas descartadas (sin fecha o móvil)` : '');
+  setData(msg + (guardar() ? ' · guardado en este navegador' : ' · no se pudo guardar (sin espacio o almacenamiento bloqueado)'));
+}
+
+/* ============ 2. MÉTRICAS ============ */
+function filtered(){
+  const mv = $('fMovil').value, gd = $('fGuardia').value, inf = $('fInformo').value, d1 = $('fDesde').value, d2 = $('fHasta').value;
+  return DATA.filter(r => (!mv||r.movil===mv) && (!gd||r.guardia===gd) && (!inf||r.informo===inf) && (!d1||r.fecha>=d1) && (!d2||r.fecha<=d2));
+}
+const sortAsc = rows => [...rows].sort((a,b) => a.fecha.localeCompare(b.fecha) || a.id - b.id || a.idx - b.idx);
+const alertHits = r => { const t = norm(r.obs + ' ' + r.luces);
+  // "se reparó la bieleta" ya no es una alerta activa
+  return KEYWORDS.filter(k => k[1].test(t) && !(k[0] === 'Bieleta' && /se repar|se arregl/.test(t))).map(k => k[0]); };
+
+// Km por móvil = km máximo - km mínimo dentro del período filtrado
+function kmPorMovil(rows){
+  const g = {};
+  rows.filter(r => r.km != null).forEach(r => { (g[r.movil] ||= []).push(r.km); });
+  const out = {}; for (const m in g) out[m] = Math.max(...g[m]) - Math.min(...g[m]);
+  return out;
+}
+// Km recorridos entre lecturas consecutivas de cada móvil, sumados por semana (lunes) o por día
+function weekStart(f){ const d = new Date(f+'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - (d.getUTCDay()+6)%7); return d.toISOString().slice(0,10); }
+function kmPorPeriodo(rows, modo){
+  const b = {}, last = {};
+  sortAsc(rows).filter(r => r.km != null).forEach(r => {
+    const prev = last[r.movil]; last[r.movil] = r.km;
+    if (prev != null && r.km > prev) { const k = modo === 'sem' ? weekStart(r.fecha) : r.fecha; b[k] = (b[k]||0) + (r.km - prev); }
+  });
+  return Object.keys(b).sort().map(k => [k, b[k]]);
+}
+// Último estado conocido de cada móvil (sobre los datos filtrados)
+function ultimoEstado(rows){ const u = {}; sortAsc(rows).forEach(r => { if (r.estado !== 'sd') u[r.movil] = r; }); return u; }
+
+/* ============ 3. RENDER ============ */
+function render(){
+  const rows = filtered(), asc = sortAsc(rows), hasData = rows.length > 0;
+  // KPIs
+  const km = kmPorMovil(rows), kmTotal = Object.values(km).reduce((a,b)=>a+b, 0);
+  const oper = rows.filter(r => r.estado === 'operativo').length, fu = rows.filter(r => r.estado === 'fuera').length; // 'sin dato' no cuenta
+  const ult = ultimoEstado(rows), fuera = Object.values(ult).filter(r => r.estado === 'fuera').length;
+  const alertas = rows.filter(r => alertHits(r).length);
+  $('kKm').textContent = hasData ? fmtNum(kmTotal) + ' km' : '—';
+  $('kDisp').textContent = hasData ? (oper+fu ? (oper/(oper+fu)*100).toFixed(1) + '%' : '—') : '—';
+  $('kFuera').textContent = hasData ? fuera : '—';
+  $('kFuera').className = 'num text-3xl font-bold mt-1 ' + (fuera ? 'text-red-400' : 'text-emerald-400');
+  $('kAlert').textContent = hasData ? alertas.length : '—';
+
+  // Tira de estado por móvil (usa todos los datos, sin filtrar por móvil)
+  const allUlt = ultimoEstado(DATA);
+  $('strip').innerHTML = MOVILES.map(m => { const r = allUlt[m], bad = r && r.estado === 'fuera';
+    return `<span class="px-2.5 py-1 rounded-full text-sm border ${!r ? 'border-slate-600 text-slate-500' : bad ? 'border-red-500 text-red-300 bg-red-500/10' : 'border-emerald-500 text-emerald-300 bg-emerald-500/10'}">${m}</span>`; }).join('');
+
+  // Gráfico de barras horizontales: km por móvil
+  const ks = Object.keys(km).sort();
+  drawChart('bar', 'cBar', { type:'bar', data:{ labels:ks, datasets:[{ data:ks.map(k => km[k]), backgroundColor:'#10b981', borderRadius:4 }] },
+    options:{ indexAxis:'y', maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'#1d2b4a'}}, y:{grid:{display:false}} } } });
+
+  // Gráfico de líneas: tendencia temporal
+  const serie = kmPorPeriodo(rows, $('fAgrup').value);
+  drawChart('line', 'cLine', { type:'line', data:{ labels:serie.map(s => fmtFecha(s[0]).slice(0,5)),
+      datasets:[{ label:'Km', data:serie.map(s => s[1]), borderColor:'#10b981', backgroundColor:'rgba(16,185,129,.15)', fill:true, tension:.3, pointRadius:3 }] },
+    options:{ maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'#1d2b4a'}}, y:{grid:{color:'#1d2b4a'}, beginAtZero:true} } } });
+
+  // Feed de alertas (más recientes primero)
+  const feed = [...alertas].reverse().slice(0, 40);
+  $('feed').innerHTML = feed.length ? feed.map(r => `<li class="rounded-lg border border-red-500/40 bg-red-500/10 p-2">
+      <div class="flex justify-between"><b>Móvil ${r.movil}</b><span class="text-slate-400">${fmtFecha(r.fecha)}</span></div>
+      <p class="text-slate-200">${esc(r.obs || r.luces)}</p>
+      <p class="text-xs text-red-300">${alertHits(r).map(esc).join(', ')}</p></li>`).join('')
+    : `<li class="text-slate-400">${hasData ? 'Sin alertas críticas en este período.' : 'Cargá un archivo para ver las alertas.'}</li>`;
+
+  renderTable(asc.reverse());
+}
+
+function renderTable(rows){
+  const pages = Math.max(1, Math.ceil(rows.length / PER_PAGE)); page = Math.min(page, pages);
+  $('tbody').innerHTML = rows.slice((page-1)*PER_PAGE, page*PER_PAGE).map(r => {
+    const bad = alertHits(r).length, low = r.comb.pct != null && r.comb.pct < 25;
+    return `<tr class="${bad ? 'bg-red-500/5' : ''}"><td class="whitespace-nowrap">${fmtFecha(r.fecha)}</td><td>${r.movil}</td><td class="whitespace-nowrap">${esc(r.informo) || '—'}${r.guardia ? ' (' + r.guardia + ')' : ''}</td>
+      <td><span class="${r.estado==='fuera' ? 'text-red-400' : r.estado==='sd' ? 'text-slate-500' : 'text-emerald-400'}">${r.estado==='fuera' ? 'Fuera de servicio' : r.estado==='sd' ? '—' : 'Operativo'}</span></td>
+      <td class="num">${r.km != null ? fmtNum(r.km) : '—'}</td><td class="${low ? 'text-red-400' : ''}">${esc(r.comb.txt)}</td>
+      <td>${esc(r.luces) || '—'}</td><td class="${bad ? 'text-red-300' : ''}">${esc(r.obs) || '—'}</td></tr>`; }).join('')
+    || '<tr><td colspan="8" class="text-slate-400">No hay registros para mostrar.</td></tr>';
+  $('pager').textContent = `Página ${page} de ${pages} · ${rows.length} registros`;
+  $('prev').disabled = page <= 1; $('next').disabled = page >= pages;
+  $('prev').classList.toggle('opacity-40', page <= 1); $('next').classList.toggle('opacity-40', page >= pages);
+}
+
+// Crea o reemplaza un gráfico de Chart.js (aquí se alimentan los gráficos con los datos ya procesados)
+function drawChart(key, canvas, cfg){ charts[key]?.destroy(); charts[key] = new Chart($(canvas), cfg); }
+
+/* ============ 4. INFORME FORMAL PARA JEFATURA ============ */
+const PERIODOS = {sem:'Última semana', mes:'Último mes', anio:'Último año'};
+const TRIVIAL = /^(\*?ok|5\/5|sin novedad|s\/n|-|no se controlo|bien|ya mencionado)?$/;   // textos que no son novedades
+
+// El período termina en la última fecha cargada (no en la fecha de hoy)
+function rangoInforme(tipo){
+  const fechas = DATA.map(r => r.fecha).sort(), min = fechas[0], fin = fechas[fechas.length-1];
+  const d = new Date(fin + 'T00:00:00Z');
+  if (tipo === 'sem') d.setUTCDate(d.getUTCDate() - 6);
+  else { if (tipo === 'mes') d.setUTCMonth(d.getUTCMonth() - 1); else d.setUTCFullYear(d.getUTCFullYear() - 1); d.setUTCDate(d.getUTCDate() + 1); }
+  let ini = d.toISOString().slice(0,10); const parcial = ini < min; if (parcial) ini = min;
+  return {ini, fin, min, parcial};
+}
+
+// Estadísticas de un móvil dentro del período.
+// Km recorridos = mayor menos menor lectura del período, incluyendo la última lectura anterior al inicio.
+function statsMovil(m, ini, fin){
+  const all = sortAsc(DATA.filter(r => r.movil === m)), en = all.filter(r => r.fecha >= ini && r.fecha <= fin);
+  const prev = all.filter(r => r.fecha < ini && r.km != null).pop();
+  const lect = en.filter(r => r.km != null), kms = lect.map(r => r.km); if (prev) kms.push(prev.km);
+  const oper = en.filter(r => r.estado === 'operativo').length, fu = en.filter(r => r.estado === 'fuera').length;
+  const ult = [...en].reverse().find(r => r.estado !== 'sd'), cb = [...en].reverse().find(r => r.comb.txt !== '—');
+  const mp = new Map();   // novedades agrupadas: mismo texto = una línea con sus fechas
+  en.forEach(r => [['', r.nov ?? r.obs], ['Luces: ', r.luces]].forEach(([pre, t]) => {
+    t = String(t || '').trim(); if (TRIVIAL.test(norm(t))) return;
+    const k = norm(pre + t).replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ');
+    if (!mp.has(k)) mp.set(k, {txt:pre + t, f:[]}); mp.get(k).f.push(r.fecha); }));
+  return { m, n:en.length, ult, kmIni:prev ? prev.km : lect[0]?.km, kmFin:lect.length ? lect[lect.length-1].km : null,
+    km:kms.length > 1 ? Math.max(...kms) - Math.min(...kms) : 0, oper, fu, disp:oper+fu ? oper/(oper+fu)*100 : null,
+    diasFuera:new Set(en.filter(r => r.estado === 'fuera').map(r => r.fecha)).size, comb:cb ? cb.comb.txt : '—',
+    alertas:[...new Set(en.flatMap(alertHits))], det:[...mp.values()].sort((a,b) => a.f[0].localeCompare(b.f[0])),
+    dudosos:en.filter(r => /km dudoso/i.test(r.obs)).length };
+}
+
+const badge = s => !s.ult ? '<span class="badge b-nd">Sin datos</span>'
+  : s.ult.estado === 'fuera' ? '<span class="badge b-bad">Fuera de servicio</span>' : '<span class="badge b-ok">Operativo</span>';
+const rangoTxt = f => { const u = [...new Set(f)].sort(); return u.length === 1 ? fmtFecha(u[0]) : fmtFecha(u[0]) + ' al ' + fmtFecha(u[u.length-1]); };
+const pctTxt = v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%';
+const kmTxt = v => v == null ? '—' : fmtNum(v);
+
+// Arma el HTML del informe (los datos salen de DATA, sin depender de los filtros del dashboard)
+function construirInforme(tipo, sel){
+  const {ini, fin, min, parcial} = rangoInforme(tipo);
+  const ms = sel ? [sel] : [...new Set(DATA.map(r => r.movil))].sort(), st = ms.map(m => statsMovil(m, ini, fin));
+  const totKm = st.reduce((a,x) => a + x.km, 0), O = st.reduce((a,x) => a + x.oper, 0), F = st.reduce((a,x) => a + x.fu, 0);
+  const fueraAct = st.filter(x => x.ult && x.ult.estado === 'fuera').map(x => x.m), conAl = st.filter(x => x.alertas.length);
+  const dud = st.reduce((a,x) => a + x.dudosos, 0), alcance = sel ? 'Móvil ' + sel : 'Todos los móviles (' + ms.join(', ') + ')';
+  let h = `<p class="muted" style="margin:0">Automotores Punilla</p><h1>Informe de estado de la flota</h1>
+  <table><tr><th style="width:24%">Alcance</th><td>${esc(alcance)}</td></tr>
+  <tr><th>Período</th><td>${PERIODOS[tipo]}: del ${fmtFecha(ini)} al ${fmtFecha(fin)}</td></tr>
+  <tr><th>Fecha de emisión</th><td>${new Date().toLocaleDateString('es-AR')}</td></tr>
+  <tr><th>Fuente</th><td>Controles diarios del grupo "AUTOMOTORES PUNILLA" (datos cargados del ${fmtFecha(min)} al ${fmtFecha(fin)})</td></tr></table>`;
+  if (parcial) h += `<p class="muted">Aviso: los datos cargados comienzan el ${fmtFecha(min)}, por lo que el informe cubre menos de un${tipo === 'anio' ? ' año' : ' mes'} completo.</p>`;
+  h += `<h2>1. Resumen ejecutivo</h2><ul>
+   <li>Kilómetros recorridos en el período: <b>${fmtNum(totKm)} km</b>${sel ? '' : ' (suma de la flota)'}.</li>
+   <li>Disponibilidad: <b>${pctTxt(O+F ? O/(O+F)*100 : null)}</b> sobre ${O+F} controles con estado informado; ${F} controles con móvil fuera de servicio.</li>
+   <li>Estado al ${fmtFecha(fin)}: ${fueraAct.length ? 'fuera de servicio: <b>' + fueraAct.join(', ') + '</b>.' : 'sin móviles fuera de servicio según el último control.'}</li>
+   <li>Alertas críticas en el período: ${conAl.length ? conAl.map(x => `<b>${x.m}</b> (${x.alertas.map(esc).join(', ')})`).join('; ') + '.' : 'no se registraron.'}</li></ul>
+  <h2>2. Cuadro comparativo</h2><table><thead><tr><th>Móvil</th><th>Estado actual</th><th class="r">Km inicial</th><th class="r">Km final</th><th class="r">Km recorridos</th><th class="r">Disponibilidad</th><th class="r">Días fuera de servicio</th><th class="r">Novedades</th></tr></thead><tbody>`
+  + st.map(x => `<tr><td><b>${x.m}</b></td><td>${badge(x)}</td><td class="r">${kmTxt(x.kmIni)}</td><td class="r">${kmTxt(x.kmFin)}</td><td class="r"><b>${kmTxt(x.km)}</b></td><td class="r">${pctTxt(x.disp)}</td><td class="r">${x.diasFuera}</td><td class="r">${x.det.length}</td></tr>`).join('')
+  + `</tbody>${st.length > 1 ? `<tfoot><tr><th colspan="4">Total de la flota</th><th class="r">${fmtNum(totKm)}</th><th class="r">${pctTxt(O+F ? O/(O+F)*100 : null)}</th><th class="r">${st.reduce((a,x) => a + x.diasFuera, 0)}</th><th class="r">${st.reduce((a,x) => a + x.det.length, 0)}</th></tr></tfoot>` : ''}</table>
+  <h2>3. Detalle por móvil</h2>`;
+  h += st.map(x => `<div class="movil"><h3>Móvil ${x.m} ${badge(x)}</h3>` + (!x.n ? '<p class="muted">Sin controles registrados en el período.</p>' : `
+    <table><tr><th>Controles</th><td>${x.n}</td><th>Último control</th><td>${x.ult ? fmtFecha(x.ult.fecha) : '—'}</td></tr>
+    <tr><th>Km inicial / final</th><td>${kmTxt(x.kmIni)} / ${kmTxt(x.kmFin)}</td><th>Km recorridos</th><td><b>${kmTxt(x.km)}</b></td></tr>
+    <tr><th>Disponibilidad</th><td>${pctTxt(x.disp)}</td><th>Días fuera de servicio</th><td>${x.diasFuera}</td></tr>
+    <tr><th>Combustible (último control)</th><td>${esc(x.comb)}</td><th>Alertas críticas</th><td>${x.alertas.length ? x.alertas.map(esc).join(', ') : 'Ninguna'}</td></tr></table>
+    <p style="margin:.5rem 0 0"><b>Novedades registradas</b></p>` + (x.det.length ? '<ul>' + x.det.map(d => `<li>${esc(d.txt)} <span class="muted">(${rangoTxt(d.f)}${d.f.length > 1 ? ' · ' + d.f.length + ' registros' : ''})</span></li>`).join('') + '</ul>' : '<p class="muted" style="margin:.2rem 0">Sin novedades registradas en el período.</p>') ) + '</div>').join('');
+  h += `<h2>4. Notas</h2><ul class="muted"><li>Km recorridos: diferencia entre la mayor y la menor lectura del período, incluida la última lectura anterior a su inicio.</li>
+   <li>Disponibilidad: controles operativos sobre controles con estado informado; los controles sin estado no se cuentan.</li>
+   <li>Las novedades iguales se agrupan en una línea con su fecha o rango de fechas.</li>${dud ? `<li>${dud} lectura(s) de km con error de tipeo en el chat quedaron excluidas del cálculo.</li>` : ''}</ul>
+  <table style="margin-top:2.2rem;border:none"><tr><td style="border:none;text-align:center;padding-top:2rem">______________________________<br>Responsable del control</td><td style="border:none;text-align:center;padding-top:2rem">______________________________<br>Jefatura</td></tr></table>
+  <p class="muted" style="text-align:center;margin-top:1rem">Desarrollado por Maldonado Jorge Matias - Email: Jorgematiasmaldonado@gmail.com<br>© 2026 Maldonado Jorge Matias. Aplicación de su propiedad y autoría. Todos los derechos reservados.</p>`;
+  return h;
+}
+function abrirInforme(){
+  if (!DATA.length) { $('status').textContent = 'Cargá datos antes de generar el informe.'; return; }
+  $('paper').innerHTML = construirInforme($('rPeriodo').value, $('rMovil').value);
+  $('reportOverlay').classList.remove('hidden'); $('reportOverlay').scrollTop = 0;
+}
+
+/* ============ EVENTOS ============ */
+function setData(msg){
+  const sel = $('fMovil'), cur = sel.value;
+  const ms = [...new Set([...MOVILES, ...DATA.map(r => r.movil)])].sort();
+  sel.innerHTML = '<option value="">Todos</option>' + ms.map(m => `<option>${m}</option>`).join('');
+  sel.value = ms.includes(cur) ? cur : '';
+  const sr = $('rMovil'), cr = sr.value; sr.innerHTML = '<option value="">Todos los móviles</option>' + ms.map(m => `<option>${m}</option>`).join(''); sr.value = ms.includes(cr) ? cr : '';
+  $('lGuardia').style.display = DATA.some(r => r.guardia) ? '' : 'none';   // el filtro Guardia solo aparece si el Excel trae esa columna
+  const si = $('fInformo'), ci = si.value, is = [...new Set(DATA.map(r => r.informo).filter(Boolean))].sort();
+  si.innerHTML = '<option value="">Todos</option>' + is.map(n => `<option>${esc(n)}</option>`).join(''); si.value = is.includes(ci) ? ci : '';
+  $('status').textContent = msg; page = 1; render();
+}
+['fMovil','fGuardia','fInformo','fDesde','fHasta','fAgrup'].forEach(id => $(id).addEventListener('change', () => { page = 1; render(); }));
+$('rGen').onclick = abrirInforme;
+$('rPrint').onclick = () => window.print();
+$('rClose').onclick = () => $('reportOverlay').classList.add('hidden');
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('rClose').onclick(); });
+$('clear').onclick = () => { try { localStorage.removeItem(LS_KEY); } catch (e) {} DATA = []; setData('Se borraron los datos guardados.'); };
+$('reset').onclick = () => { ['fMovil','fGuardia','fInformo','fDesde','fHasta'].forEach(id => $(id).value = ''); page = 1; render(); };
+$('prev').onclick = () => { page--; render(); };
+$('next').onclick = () => { page++; render(); };
+$('file').onchange = e => loadFiles([...e.target.files]);
+const drop = $('drop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('border-emerald-500'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('border-emerald-500'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('border-emerald-500'); loadFiles([...e.dataTransfer.files]); });
+
+// Datos de ejemplo para probar el diseño sin tener el Excel a mano
+$('demo').onclick = () => {
+  const guardias = ['A','B','C'], obsDemo = { '445':'Cuesta arrancar en frío', '483':'Ruido en bieleta delantera', '484':'Bieleta floja', '482':'Rueda desinflada', '481':'Ratas en el garaje' };
+  const kms = {}; MOVILES.forEach((m,i) => kms[m] = 30000 + i*4000); DATA = [];
+  for (let d = 0; d < 21; d++) { const f = new Date(Date.UTC(2026,9,5+d)).toISOString().slice(0,10);
+    MOVILES.forEach((m,i) => { kms[m] += 40 + ((d*7 + i*13) % 90);
+      const alerta = (d + i) % 9 === 0 && obsDemo[m], fuera = m === '483' && d > 16;
+      DATA.push({ fecha:f, movil:m, id:DATA.length, idx:0, informo:'Chofer de ejemplo', nov:(alerta ? obsDemo[m] : ''), guardia:guardias[(d+i)%3], km:kms[m], comb:cleanComb(['full','3/4','-2 líneas','1/2'][(d+i)%4]),
+        estado: fuera ? 'fuera' : 'operativo', luces:(d+i)%11===0 ? 'Luz baja izquierda quemada' : 'OK', obs: alerta ? obsDemo[m] : '' }); }); }
+  setData(`Datos de ejemplo: ${DATA.length} registros (no son reales y no se guardan)`);
+};
+
+Chart.defaults.color = '#94a3b8'; Chart.defaults.borderColor = '#1d2b4a';
+if (!restaurar()) setData('Todavía no hay datos cargados.');
+</script>
+</body>
+</html>
